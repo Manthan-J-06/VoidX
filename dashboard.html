@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>VoidX — Private Browser</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background: #0a0a0f;
+            margin: 0;
+            padding: 20px;
+            color: #e4e4ec;
+        }
+
+        h2 {
+            font-family: "JetBrains Mono", "Fira Code", Consolas, monospace;
+            letter-spacing: 0.02em;
+        }
+
+        .tagline {
+            color: #22d3ee;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            margin-top: -10px;
+            margin-bottom: 20px;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: #12121a;
+            padding: 20px;
+            border-radius: 8px;
+            border: 1px solid #23232f;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        .error {
+            color: #d9534f;
+            margin-top: 10px;
+            font-weight: bold;
+        }
+
+        input[type="password"] {
+            padding: 10px;
+            font-size: 16px;
+            width: 100%;
+            box-sizing: border-box;
+            margin-bottom: 10px;
+            border: 1px solid #23232f;
+            border-radius: 4px;
+            background: #0a0a0f;
+            color: #e4e4ec;
+        }
+
+        input[type="password"]:focus {
+            outline: none;
+            border-color: #22d3ee;
+            box-shadow: 0 0 8px rgba(34, 211, 238, 0.4);
+        }
+
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            background: #23232f;
+            color: #e4e4ec;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        button:hover:not(:disabled) {
+            background: #2c2c3a;
+            box-shadow: 0 0 10px rgba(139, 92, 246, 0.4);
+        }
+
+        button:disabled {
+            background: #1a1a24;
+            color: #666;
+            cursor: not-allowed;
+            box-shadow: none;
+        }
+
+        #new-btn {
+            background: linear-gradient(135deg, #8b5cf6, #22d3ee);
+            color: white;
+            border: none;
+        }
+
+        #new-btn:hover:not(:disabled) {
+            box-shadow: 0 0 12px rgba(139, 92, 246, 0.6);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+
+        th,
+        td {
+            text-align: left;
+            padding: 12px;
+            border-bottom: 1px solid #23232f;
+        }
+
+        th {
+            background-color: #0a0a0f;
+        }
+
+        .cred-panel {
+            background: #161620;
+            border: 1px solid #23232f;
+            border-left: 3px solid #8b5cf6;
+            color: #e4e4ec;
+            padding: 15px;
+            border-radius: 4px;
+            margin-top: 20px;
+        }
+
+        .cred-row {
+            margin-bottom: 10px;
+        }
+
+        .cred-val {
+            display: inline-block;
+            padding: 5px;
+            background: #0a0a0f;
+            border: 1px solid #23232f;
+            border-radius: 4px;
+            min-width: 250px;
+            font-family: monospace;
+            color: #e4e4ec;
+        }
+
+        .copy-btn {
+            padding: 4px 10px;
+            font-size: 12px;
+        }
+
+        .badge {
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: bold;
+            font-family: "JetBrains Mono", "Fira Code", Consolas, monospace;
+            letter-spacing: 0.02em;
+        }
+
+        .badge.ready {
+            background: linear-gradient(135deg, #8b5cf6, #22d3ee);
+            color: white;
+        }
+
+        .badge.starting {
+            background: #f0ad4e;
+            color: white;
+        }
+
+        a {
+            color: #22d3ee;
+            text-decoration: none;
+            margin-right: 10px;
+        }
+
+        a:hover {
+            text-decoration: underline;
+            color: #22d3ee;
+        }
+
+        .destroy-btn {
+            background: #d9534f;
+            padding: 6px 12px;
+            font-size: 14px;
+            color: white;
+        }
+
+        .destroy-btn:hover {
+            background: #c9302c;
+            box-shadow: none;
+            /* keep it visually distinct, no accent color */
+        }
+    </style>
+</head>
+
+<body>
+    <div id="login-view" class="container">
+        <h2>VoidX</h2>
+        <p class="tagline">Disposable browsing. Zero trace.</p>
+        <input type="password" id="api-key-input" placeholder="API Key" />
+        <button id="unlock-btn">Unlock</button>
+        <div id="login-err" class="error"></div>
+    </div>
+
+    <div id="dash-view" class="container hidden">
+        <h2>VoidX</h2>
+        <button id="new-btn">New private session</button>
+        <div id="action-err" class="error"></div>
+
+        <div id="cred-panel" class="cred-panel hidden">
+            <p><strong>Shown once. It is not stored and cannot be shown again.</strong></p>
+            <div class="cred-row">URL: <span id="cred-url" class="cred-val"></span> <button class="copy-btn"
+                    data-target="cred-url">Copy</button></div>
+            <div class="cred-row">Username: <span id="cred-user" class="cred-val"></span> <button class="copy-btn"
+                    data-target="cred-user">Copy</button></div>
+            <div class="cred-row">Password: <span id="cred-pass" class="cred-val"></span> <button class="copy-btn"
+                    data-target="cred-pass">Copy</button></div>
+        </div>
+
+        <table id="sessions-table">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Status</th>
+                    <th>Expires In</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="session-list"></tbody>
+        </table>
+    </div>
+
+    <script>
+        let sessionKey = null;
+        let pollTimer = null;
+        let tickTimer = null;
+        let sessionsCache = [];
+        let sessionRowMap = new Map();
+
+        const loginView = document.getElementById("login-view");
+        const dashView = document.getElementById("dash-view");
+        const loginErr = document.getElementById("login-err");
+        const actionErr = document.getElementById("action-err");
+        const apiKeyInput = document.getElementById("api-key-input");
+        const newBtn = document.getElementById("new-btn");
+        const credPanel = document.getElementById("cred-panel");
+        const sessionList = document.getElementById("session-list");
+
+        function switchView(toDash, msg = "") {
+            if (toDash) {
+                loginView.classList.add("hidden");
+                dashView.classList.remove("hidden");
+                loginErr.textContent = "";
+            } else {
+                sessionKey = null;
+                dashView.classList.add("hidden");
+                loginView.classList.remove("hidden");
+                loginErr.textContent = msg;
+                clearInterval(pollTimer);
+                clearInterval(tickTimer);
+                credPanel.classList.add("hidden");
+                document.getElementById("cred-url").textContent = "";
+                document.getElementById("cred-user").textContent = "";
+                document.getElementById("cred-pass").textContent = "";
+                sessionsCache = [];
+                sessionList.textContent = "";
+                sessionRowMap.clear();
+            }
+        }
+
+        async function fetchSessions() {
+            if (!sessionKey) return;
+            try {
+                const res = await fetch("/sessions", { headers: { "X-API-Key": sessionKey } });
+                if (res.status === 401) {
+                    switchView(false, "Wrong key");
+                    return;
+                }
+                if (!res.ok) {
+                    actionErr.textContent = "Error fetching listing";
+                    return;
+                }
+                const data = await res.json();
+                actionErr.textContent = "";
+                sessionsCache = data.sessions || [];
+                renderList();
+            } catch (err) {
+                actionErr.textContent = "Connection lost";
+            }
+        }
+
+        function createEl(tag, textContext) {
+            const el = document.createElement(tag);
+            if (textContext) el.textContent = textContext;
+            return el;
+        }
+
+        function renderList() {
+            const currentIds = new Set(sessionsCache.filter(s => s.expires_in > 0).map(s => s.session_id));
+
+            for (const id of sessionRowMap.keys()) {
+                if (!currentIds.has(id)) {
+                    sessionRowMap.get(id).tr.remove();
+                    sessionRowMap.delete(id);
+                }
+            }
+
+            for (const s of sessionsCache) {
+                if (s.expires_in <= 0) continue;
+
+                if (sessionRowMap.has(s.session_id)) {
+                    const rowData = sessionRowMap.get(s.session_id);
+                    rowData.badge.textContent = s.ready ? "Ready" : "Starting...";
+                    rowData.badge.setAttribute("class", s.ready ? "badge ready" : "badge starting");
+                    rowData.tdExp.textContent = s.expires_in.toString();
+                } else {
+                    const tr = document.createElement("tr");
+                    tr.appendChild(createEl("td", s.session_id));
+
+                    const tdStatus = document.createElement("td");
+                    const badge = createEl("span", s.ready ? "Ready" : "Starting...");
+                    badge.setAttribute("class", s.ready ? "badge ready" : "badge starting");
+                    tdStatus.appendChild(badge);
+                    tr.appendChild(tdStatus);
+
+                    const tdExp = createEl("td", s.expires_in.toString());
+                    tr.appendChild(tdExp);
+
+                    const tdAction = document.createElement("td");
+                    const openA = createEl("a", "Open");
+                    openA.setAttribute("href", s.url);
+                    openA.setAttribute("target", "_blank");
+                    openA.setAttribute("rel", "noopener noreferrer");
+                    tdAction.appendChild(openA);
+
+                    const delBtn = createEl("button", "Destroy");
+                    delBtn.setAttribute("class", "destroy-btn");
+                    delBtn.onclick = async () => {
+                        try {
+                            const res = await fetch("/sessions/" + s.session_id, { method: "DELETE", headers: { "X-API-Key": sessionKey } });
+                            if (res.status === 401) {
+                                switchView(false, "Wrong key");
+                                return;
+                            }
+                            if (res.ok) {
+                                fetchSessions();
+                            } else {
+                                actionErr.textContent = "Request failed";
+                            }
+                        } catch (e) {
+                            actionErr.textContent = "Connection lost";
+                        }
+                    };
+                    tdAction.appendChild(delBtn);
+                    tr.appendChild(tdAction);
+                    sessionList.appendChild(tr);
+
+                    sessionRowMap.set(s.session_id, { tr, badge, tdExp });
+                }
+            }
+        }
+
+        document.getElementById("unlock-btn").onclick = async () => {
+            const val = apiKeyInput.value.trim();
+            if (!val) return;
+            loginErr.textContent = "Checking...";
+            try {
+                const res = await fetch("/sessions", { headers: { "X-API-Key": val } });
+                if (res.status === 401) {
+                    loginErr.textContent = "Wrong key";
+                } else if (res.ok) {
+                    sessionKey = val;
+                    apiKeyInput.value = "";
+                    switchView(true);
+                    fetchSessions();
+                    pollTimer = setInterval(fetchSessions, 5000);
+                    tickTimer = setInterval(() => {
+                        let changed = false;
+                        sessionsCache.forEach(s => {
+                            if (s.expires_in > 0) {
+                                s.expires_in--;
+                                changed = true;
+                            }
+                        });
+                        if (changed) renderList();
+                    }, 1000);
+                } else {
+                    loginErr.textContent = "Server returned " + res.status;
+                }
+            } catch (err) {
+                loginErr.textContent = "Connection lost";
+            }
+        };
+
+        newBtn.onclick = async () => {
+            newBtn.disabled = true;
+            actionErr.textContent = "";
+            credPanel.classList.add("hidden");
+            try {
+                const res = await fetch("/sessions", { method: "POST", headers: { "X-API-Key": sessionKey } });
+                if (res.status === 401) {
+                    switchView(false, "Wrong key");
+                } else if (res.status === 429) {
+                    const data = await res.json().catch(() => ({}));
+                    const msg = { too_many_sessions: "Session limit reached", rate_limited: "Too many new sessions, please wait a moment", too_many_attempts: "Too many failed attempts, please wait a moment" }[data.error] || "Please wait a moment and try again";
+                    actionErr.textContent = msg;
+                } else if (!res.ok) {
+                    const data = await res.json().catch(() => ({}));
+                    actionErr.textContent = data.error || "Server error";
+                } else {
+                    const data = await res.json();
+                    document.getElementById("cred-url").textContent = data.url;
+                    document.getElementById("cred-user").textContent = data.username;
+                    document.getElementById("cred-pass").textContent = data.password;
+                    credPanel.classList.remove("hidden");
+                    fetchSessions();
+                }
+            } catch (err) {
+                actionErr.textContent = "Connection lost";
+            }
+            newBtn.disabled = false;
+        };
+
+        document.querySelectorAll(".copy-btn").forEach(btn => {
+            btn.onclick = async () => {
+                const target = document.getElementById(btn.getAttribute("data-target"));
+                const old = btn.textContent;
+                try {
+                    await navigator.clipboard.writeText(target.textContent);
+                    btn.textContent = "Copied!";
+                } catch (e) {
+                    btn.textContent = "Copy failed";
+                }
+                setTimeout(() => btn.textContent = old, 1500);
+            };
+        });
+    </script>
+</body>
+
+</html>
