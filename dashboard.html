@@ -199,6 +199,9 @@
 
     <div id="dash-view" class="container hidden">
         <h2>VoidX</h2>
+        <input type="number" id="duration-input" min="1" max="60" value="10"
+            style="width:60px;padding:8px;background:#0a0a0f;border:1px solid #23232f;border-radius:4px;color:#e4e4ec;font-size:14px;margin-right:4px;">
+        <label for="duration-input" style="color:#e4e4ec;font-size:14px;margin-right:8px;">min</label>
         <button id="new-btn">New private session</button>
         <div id="action-err" class="error"></div>
 
@@ -391,8 +394,14 @@
             newBtn.disabled = true;
             actionErr.textContent = "";
             credPanel.classList.add("hidden");
+            const durVal = parseFloat(document.getElementById("duration-input").value);
+            const seconds = (!isNaN(durVal) && durVal > 0) ? Math.round(durVal * 60) : 0;
             try {
-                const res = await fetch("/sessions", { method: "POST", headers: { "X-API-Key": sessionKey } });
+                const res = await fetch("/sessions", {
+                    method: "POST",
+                    headers: { "X-API-Key": sessionKey, "Content-Type": "application/json" },
+                    body: JSON.stringify(seconds ? { duration_seconds: seconds } : {})
+                });
                 if (res.status === 401) {
                     switchView(false, "Wrong key");
                 } else if (res.status === 429) {
@@ -401,7 +410,11 @@
                     actionErr.textContent = msg;
                 } else if (!res.ok) {
                     const data = await res.json().catch(() => ({}));
-                    actionErr.textContent = data.error || "Server error";
+                    if (data.error === "invalid_duration") {
+                        actionErr.textContent = `Duration must be between ${data.min / 60} and ${data.max / 60} minutes`;
+                    } else {
+                        actionErr.textContent = data.error || "Server error";
+                    }
                 } else {
                     const data = await res.json();
                     document.getElementById("cred-url").textContent = data.url;

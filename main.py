@@ -13,6 +13,7 @@ import redis
 import docker
 import docker.errors
 from fastapi import FastAPI, Request
+from pydantic import BaseModel
 from fastapi.responses import JSONResponse, HTMLResponse
 from pathlib import Path
 import hmac
@@ -35,6 +36,8 @@ client = redis.Redis.from_url(
 )
 
 SESSION_TTL_SECONDS = int(os.environ.get("SESSION_TTL_SECONDS", "600"))
+MIN_SESSION_TTL_SECONDS = int(os.environ.get("MIN_SESSION_TTL_SECONDS", "60"))
+MAX_SESSION_TTL_SECONDS = int(os.environ.get("MAX_SESSION_TTL_SECONDS", "3600"))
 MAX_SESSIONS = int(os.environ.get("MAX_SESSIONS", "3"))
 REAPER_INTERVAL_SECONDS = int(os.environ.get("REAPER_INTERVAL_SECONDS", "5"))
 REAPER_GRACE_SECONDS = int(os.environ.get("REAPER_GRACE_SECONDS", "20"))
@@ -227,6 +230,9 @@ async def lifespan(app):
 
 app = FastAPI(lifespan=lifespan)
 
+class CreateSessionRequest(BaseModel):
+    duration_seconds: int | None = None
+
 @app.middleware("http")
 async def require_key(request: Request, call_next):
     if request.url.path == "/health":
@@ -270,7 +276,7 @@ def health():
         return JSONResponse(status_code=503, content={"status": "degraded", "redis": False})
 
 @app.post("/sessions")
-def create_session():
+def create_session(body: CreateSessionRequest = CreateSessionRequest()):
     try:
         count, ttl = hit("rl:create", RATE_CREATE_WINDOW)
     except REDIS_ERRORS:
@@ -278,6 +284,10 @@ def create_session():
     if count > RATE_CREATE_LIMIT:
         audit("rate_limited", detail="create")
         return JSONResponse(status_code=429, content={"error": "rate_limited"}, headers={"Retry-After": str(ttl)})
+
+    duration = SESSION_TTL_SECONDS if body.duration_seconds is None else body.duration_seconds
+    if duration < MIN_SESSION_TTL_SECONDS or duration > MAX_SESSION_TTL_SECONDS:
+        return JSONResponse(status_code=400, content={"error": "invalid_duration", "min": MIN_SESSION_TTL_SECONDS, "max": MAX_SESSION_TTL_SECONDS})
 
     try:
         keys = list(client.scan_iter("session:*"))
@@ -420,7 +430,7 @@ def create_session():
             "port": worked_port,
             "created_at": created_at
         }
-        client.set("session:" + session_id, json.dumps(session_data), ex=SESSION_TTL_SECONDS)
+        client.set("session:" + session_id, json.dumps(session_data), ex=duration)
     except (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError, redis.exceptions.RedisError):
         safe_cleanup(dclient, session_id)
         return JSONResponse(status_code=503, content={"error": "redis_unavailable"})
@@ -430,7 +440,7 @@ def create_session():
     return JSONResponse(status_code=201, content={
         "session_id": session_id,
         "url": f"https://localhost:{worked_port}",
-        "expires_in": SESSION_TTL_SECONDS,
+        "expires_in": duration,
         "username": "pb",
         "password": pw
     })
