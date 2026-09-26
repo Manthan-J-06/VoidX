@@ -1,5 +1,10 @@
 # Private Browser
 
+![CI](https://github.com/Manthan-J-06/VoidX/actions/workflows/ci.yml/badge.svg)
+
+
+![CI](https://github.com/Manthan-J-06/VoidX/actions/workflows/ci.yml/badge.svg)
+
 A self-hosted service that gives you a **disposable, isolated browser** on demand. Each session is a fresh incognito Chromium running in its own Docker sandbox, routed through its own Tor proxy, and destroyed automatically when it expires. Redis tracks sessions, enforces rate limits, and keeps an audit log.
 
 > **Status:** working project, tested on Windows 10 + Docker Desktop (WSL 2). Every feature below was checked with scripted PASS/FAIL tests against live containers. See [Verification](#verification) and [Known limitations](#known-limitations) for what is and isn't covered.
