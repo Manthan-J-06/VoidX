@@ -10,7 +10,7 @@ h11==0.16.0
 idna==3.20
 pydantic==2.13.5
 pydantic_core==2.46.5
-pywin32==312
+pywin32==312; sys_platform == "win32"
 redis==8.1.0
 requests==2.34.2
 starlette==1.6.0
