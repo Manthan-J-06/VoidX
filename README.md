@@ -178,3 +178,6 @@ requirements.txt   Python dependencies
 ## License
 
 Add a license before publishing (for example MIT).
+
+### Caddy (planned, validated)
+A prototype was tested and confirmed working: Caddy, using the caddy-docker-proxy plugin, can auto-discover session containers via Docker labels and route to them dynamically (no restart needed when a new session starts), serving one consistent HTTPS endpoint instead of one per-session self-signed cert. Not yet integrated, because it would change the public session URL shape (/s/<id>/ instead of a per-session port) and touch the dashboard, API response, and existing tests.
