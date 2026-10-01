@@ -52,6 +52,7 @@ IMAGE = "pb-browser:latest"
 TOR_IMAGE = "pb-net:latest"
 SESSION_NETWORK = "pb-sessions"
 PIDS_LIMIT = 512
+RUNNING_IN_CONTAINER = os.environ.get("RUNNING_IN_CONTAINER", "false").lower() == "true"
 
 def get_docker():
     return docker.from_env()
@@ -69,7 +70,16 @@ def tor_ready(session_id):
     except docker.errors.DockerException:
         return False
 
+def browser_serving(session_id):
+    try:
+        text = get_docker().containers.get("pbsession-" + session_id).logs(tail=200).decode("utf-8", "replace")
+        return "All main components initialized" in text
+    except docker.errors.DockerException:
+        return False
+
 def session_ready(port, session_id):
+    if RUNNING_IN_CONTAINER:
+        return browser_serving(session_id) and tor_ready(session_id)
     try:
         r = requests.get(f"https://127.0.0.1:{int(port)}/", verify=False, timeout=2, allow_redirects=False)
         return r.status_code in (200, 401) and tor_ready(session_id)

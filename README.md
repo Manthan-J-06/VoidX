@@ -80,7 +80,7 @@ On first run `start.ps1`:
 3. (re)creates a password-protected Redis container on `127.0.0.1:16379`,
 4. starts the API on `http://127.0.0.1:8000`.
 
-Open `http://127.0.0.1:8000/`, paste the `PB_API_KEY` from `.env`, and click **New private session**. The session shows *Starting...* for roughly 30 to 50 seconds while Tor connects, then *Ready*. Click **Open**, accept the self-signed certificate warning (the connection is to `127.0.0.1` on your own machine), and log in with the username and password shown on the dashboard. The password is shown once and is never stored.
+Open `http://127.0.0.1:8000/`, paste the `PB_API_KEY` from `.env`, and click **New private session**. The session shows *Starting...* for roughly 30 seconds to 2+ minutes (Tor circuit build time varies) while Tor connects, then *Ready*. Click **Open**, accept the self-signed certificate warning (the connection is to `127.0.0.1` on your own machine), and log in with the username and password shown on the dashboard. The password is shown once and is never stored.
 
 > Redis is published on port **16379** on purpose. Do not point this project at the default port 6379: another Redis on your machine may be listening there without a password.
 
@@ -139,7 +139,7 @@ Please read these before relying on it:
 - **Self-signed certificates.** Browsers show a warning when opening a session. Trusted certificates would need a real domain.
 - **State is in memory by design.** Restarting Redis drops session records and the audit log; the reaper then removes the now-unrecorded containers.
 - **A lockout can be triggered by anything on your machine** that sends wrong keys, which also blocks the correct key for about a minute.
-- **Startup takes 30 to 50 seconds.** If Tor can't connect (for example, on a network that blocks it), a session stays on *Starting...* until it expires.
+- **Startup takes 30 seconds to 2+ minutes (Tor circuit build time varies).** If Tor can't connect (for example, on a network that blocks it), a session stays on *Starting...* until it expires.
 - **Windows only for now.** `start.ps1` is PowerShell; the services themselves are portable, and a cross-platform setup is on the roadmap.
 - **Some dashboard fixes are unverified.** Clearing old credentials after a re-login, click stability while the list refreshes, and the Copy-failed message are in the code but haven't been tested.
 
