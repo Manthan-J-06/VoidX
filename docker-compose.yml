@@ -1,0 +1,91 @@
+networks:
+  voidx-internal:
+    driver: bridge
+
+services:
+
+  redis:
+    image: redis:7-alpine
+    command: [ "redis-server", "--requirepass", "${REDIS_PASSWORD}", "--appendonly", "no" ]
+    tmpfs:
+      - /data
+    ports:
+      - "127.0.0.1:16379:6379"
+    healthcheck:
+      test: [ "CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - voidx-internal
+
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    environment:
+      CONTAINERS: 1
+      NETWORKS: 1
+      POST: 1
+      IMAGES: 0
+      VOLUMES: 0
+      EXEC: 0
+      INFO: 0
+      SYSTEM: 0
+      BUILD: 0
+      COMMIT: 0
+      PLUGINS: 0
+      SECRETS: 0
+      SERVICES: 0
+      SWARM: 0
+      TASKS: 0
+      NODES: 0
+      DISTRIBUTION: 0
+      AUTH: 0
+      SESSION: 0
+      GRPC: 0
+      CONFIGS: 0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+    networks:
+      - voidx-internal
+
+  # One-shot build helpers — only active with: docker compose --profile build run --rm <name>
+  image-net:
+    build:
+      context: ./pbnet
+    image: pb-net:latest
+    command: [ "true" ]
+    profiles:
+      - build
+    networks:
+      - voidx-internal
+
+  image-browser:
+    build:
+      context: ./pbbrowser
+    image: pb-browser:latest
+    command: [ "true" ]
+    profiles:
+      - build
+    networks:
+      - voidx-internal
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      redis:
+        condition: service_healthy
+      docker-proxy:
+        condition: service_started
+    environment:
+      PB_API_KEY: "${PB_API_KEY}"
+      REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379/0"
+      DOCKER_HOST: "tcp://docker-proxy:2375"
+    ports:
+      - "127.0.0.1:8000:8000"
+    restart: unless-stopped
+    networks:
+      - voidx-internal
