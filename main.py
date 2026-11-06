@@ -53,6 +53,13 @@ TOR_IMAGE = "pb-net:latest"
 SESSION_NETWORK = "pb-sessions"
 PIDS_LIMIT = 512
 RUNNING_IN_CONTAINER = os.environ.get("RUNNING_IN_CONTAINER", "false").lower() == "true"
+CADDY_ENABLED = os.environ.get("PB_CADDY", "false").lower() == "true"
+CADDY_PORT = os.environ.get("PB_CADDY_PORT", "8443")
+
+def session_url(session_id, port):
+    if CADDY_ENABLED:
+        return f"https://{session_id}.localhost:{CADDY_PORT}"
+    return f"https://localhost:{port}"
 
 def get_docker():
     return docker.from_env()
@@ -397,6 +404,13 @@ def create_session(body: CreateSessionRequest = CreateSessionRequest()):
         if port in used_ports:
             continue
         try:
+            base = {"pb.managed": "true", "pb.session": session_id, "pb.role": "fwd"}
+            if CADDY_ENABLED:
+                base["caddy"] = f"{session_id}.localhost"
+                base["caddy.tls"] = "internal"
+                base["caddy.reverse_proxy"] = f"https://host.docker.internal:{port}"
+                base["caddy.reverse_proxy.transport"] = "http"
+                base["caddy.reverse_proxy.transport.tls_insecure_skip_verify"] = ""
             relay_container = dclient.containers.run(
                 image=TOR_IMAGE,
                 name="pbfwd-" + session_id,
@@ -410,7 +424,7 @@ def create_session(body: CreateSessionRequest = CreateSessionRequest()):
                 security_opt=["no-new-privileges:true"],
                 cap_drop=["ALL"],
                 pids_limit=64,
-                labels={"pb.managed": "true", "pb.session": session_id, "pb.role": "fwd"}
+                labels=base
             )
             dclient.networks.get("pbint-" + session_id).connect(relay_container)
             worked_port = port
@@ -449,7 +463,7 @@ def create_session(body: CreateSessionRequest = CreateSessionRequest()):
 
     return JSONResponse(status_code=201, content={
         "session_id": session_id,
-        "url": f"https://localhost:{worked_port}",
+        "url": session_url(session_id, worked_port),
         "expires_in": duration,
         "username": "pb",
         "password": pw
@@ -480,7 +494,7 @@ def list_sessions():
     for _, data, ttl in raw_sessions:
         sessions.append({
             "session_id": data["session_id"],
-            "url": f"https://localhost:{data['port']}",
+            "url": session_url(data["session_id"], data["port"]),
             "expires_in": ttl,
             "ready": session_ready(data["port"], data["session_id"])
         })
@@ -501,7 +515,7 @@ def get_session(session_id: str):
         
         return JSONResponse(status_code=200, content={
             "session_id": session_id,
-            "url": f"https://localhost:{data.get('port')}",
+            "url": session_url(session_id, data.get("port")),
             "expires_in": ttl,
             "ready": session_ready(data.get("port"), session_id)
         })

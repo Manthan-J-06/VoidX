@@ -131,5 +131,24 @@ if ($buildRes2.ExitCode -ne 0) {
     Write-Host "Browser image ready."
 }
 
+$caddyPort = if ($env:PB_CADDY_PORT) { $env:PB_CADDY_PORT } else { "8443" }
+if ($env:PB_CADDY -eq "true") {
+    $null = Invoke-Native { docker network create pb-caddynet }
+    $null = Invoke-Native { docker rm -f pb-caddy pb-caddy-proxy }
+    $proxyRes = Invoke-Native { docker run -d --name pb-caddy-proxy --network pb-caddynet -e CONTAINERS=1 -e NETWORKS=1 -e SERVICES=1 -e TASKS=1 -e NODES=1 -e INFO=1 -e POST=0 -v /var/run/docker.sock:/var/run/docker.sock:ro tecnativa/docker-socket-proxy:latest }
+    if ($proxyRes.ExitCode -ne 0) {
+        Write-Host $proxyRes.Output
+        exit 1
+    }
+    $caddyRes = Invoke-Native { docker run -d --name pb-caddy --network pb-caddynet -e DOCKER_HOST=tcp://pb-caddy-proxy:2375 -p 127.0.0.1:${caddyPort}:443 lucaslorentz/caddy-docker-proxy:2.9-alpine }
+    if ($caddyRes.ExitCode -ne 0) {
+        Write-Host $caddyRes.Output
+        exit 1
+    }
+    Write-Host "Caddy ready: sessions open at https://<id>.localhost:$caddyPort"
+} else {
+    $null = Invoke-Native { docker rm -f pb-caddy pb-caddy-proxy }
+}
+
 Write-Host "Dashboard: http://127.0.0.1:8000/"
 & .\.venv\Scripts\python.exe -m uvicorn main:app --host 127.0.0.1 --port 8000
