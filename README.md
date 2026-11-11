@@ -92,7 +92,7 @@ All endpoints except `/health` and `GET /` require the header `X-API-Key: <key>`
 |---|---|---|
 | `GET` | `/` | Dashboard page (no key needed; the page itself contains no secrets) |
 | `GET` | `/health` | `200` if the API can reach Redis, otherwise `503` |
-| `POST` | `/sessions` | Create a session. `201` with `session_id`, `url`, `expires_in`, `username`, `password` |
+| `POST` | `/sessions` | Create a session (accepts optional body `{"duration_seconds": N}`). `201` with `session_id`, `url`, `expires_in`, `username`, `password` |
 | `GET` | `/sessions` | List live sessions (id, url, seconds left, `ready`) |
 | `GET` | `/sessions/{id}` | One session. `ready` is true only when the browser answers **and** Tor has connected |
 | `DELETE` | `/sessions/{id}` | Destroy a session (containers, network, record) |
@@ -109,10 +109,13 @@ Environment variables (defaults in parentheses):
 | `PB_API_KEY` | API key, at least 16 characters. The server refuses to start without it |
 | `REDIS_URL` | Redis connection (`redis://127.0.0.1:16379/0`). `start.ps1` sets it with the password |
 | `SESSION_TTL_SECONDS` (600) | Session lifetime |
+| `MIN_SESSION_TTL_SECONDS` (60) / `MAX_SESSION_TTL_SECONDS` (3600) | Bounds for the optional `duration_seconds` field of `POST /sessions` |
 | `MAX_SESSIONS` (3) | Concurrent sessions, checked against both Redis records and live containers |
 | `REAPER_INTERVAL_SECONDS` (5) / `REAPER_GRACE_SECONDS` (20) | Reaper cycle and minimum age before an orphan is removed |
 | `RATE_CREATE_LIMIT` (5) / `RATE_CREATE_WINDOW` (60) | Session creations allowed per window |
 | `AUTH_FAIL_LIMIT` (10) / `AUTH_FAIL_WINDOW` (60) | Failed key attempts before lockout |
+| `PB_CADDY` (false) | `true` starts Caddy and gives each session its own `https://<id>.localhost` address |
+| `PB_CADDY_PORT` (8443) | Host port Caddy listens on |
 
 ## Security model
 
@@ -140,8 +143,8 @@ Please read these before relying on it:
 - **State is in memory by design.** Restarting Redis drops session records and the audit log; the reaper then removes the now-unrecorded containers.
 - **A lockout can be triggered by anything on your machine** that sends wrong keys, which also blocks the correct key for about a minute.
 - **Startup takes 30 seconds to 2+ minutes (Tor circuit build time varies).** If Tor can't connect (for example, on a network that blocks it), a session stays on *Starting...* until it expires.
-- **Windows only for now.** `start.ps1` is PowerShell; the services themselves are portable, and a cross-platform setup is on the roadmap.
-- **Some dashboard fixes are unverified.** Clearing old credentials after a re-login, click stability while the list refreshes, and the Copy-failed message are in the code but haven't been tested.
+- The native launcher (start.ps1) is Windows PowerShell; the docker-compose setup (see docker-compose.README.md) is the cross-platform alternative.
+- **Not tested:** WebRTC leaks, browser fingerprinting, and raw UDP DNS to a public resolver (the Chromium image has no nslookup).
 
 ## Verification
 
@@ -152,14 +155,16 @@ Each stage was checked with a scripted test that creates real sessions and print
 - Tor: traffic exits through Tor and the exit address differs from the real one;
 - Redis password enforcement and audit-log contents (including that no secrets appear);
 - rate limiting, lockout and recovery.
+- Network leak tests: no IPv4 default route in a session, direct IPv4 and IPv6 connections fail, local DNS cannot resolve public names (with a control showing internal names do resolve), and Tor's SOCKS proxy refuses the host's API and Redis ports, the loopback address and the Redis container.
 
-These scripts currently live outside the repository. Converting them into an automated `pytest` suite with GitHub Actions is on the roadmap.
+These checks are now an automated pytest suite in tests/: 7 smoke tests that need no Docker (run on every push by GitHub Actions) and 21 integration tests that need a running stack (python -m pytest -m integration, several minutes, mostly waiting for Tor). Nine of the integration tests are network-leak tests (tests/test_leaks.py).
 
 ## Roadmap
 
-- [ ] Automated test suite (`pytest`) and CI
-- [ ] `docker compose` setup with a restricted Docker socket proxy
-- [ ] Clearer dashboard messages for rate limits and lockouts
+- [x] Automated test suite (`pytest`) and CI
+- [x] `docker compose` setup with a restricted Docker socket proxy
+- [x] Clearer dashboard messages for rate limits and lockouts
+- [x] Optional Caddy front door
 - [ ] Live dashboard updates (currently polls every 5 seconds)
 - [ ] Optional "direct mode" (isolation without Tor) for sites that block Tor
 - [ ] Cross-platform start script
@@ -167,17 +172,43 @@ These scripts currently live outside the repository. Converting them into an aut
 ## Project layout
 
 ```
-main.py            FastAPI service, reaper, rate limiting, audit log
-dashboard.html     Single-file dashboard (no external resources)
-start.ps1          Setup and launcher (Windows PowerShell)
-pbnet/Dockerfile   Tor + relay image
-pbbrowser/         Chromium image with the default-search policy
-requirements.txt   Python dependencies
+main.py                  FastAPI service, reaper, rate limiting, audit log
+dashboard.html           Single-file dashboard (no external resources)
+start.ps1                Setup and launcher (Windows PowerShell)
+docker-compose.yml       Containerized multi-service stack with socket proxy
+docker-compose.README.md Guide for running with docker compose
+Dockerfile               Container build for the API service
+pbnet/Dockerfile         Tor + relay image
+pbbrowser/               Chromium image with the default-search policy
+.env.example             Example configuration and environment variables
+requirements.txt         Python runtime dependencies
+requirements-dev.txt     Development and testing dependencies
+pytest.ini               Pytest configuration and test markers
+tests/                   Automated smoke and integration test suite
+.github/workflows/ci.yml GitHub Actions CI workflow for smoke tests
+LICENSE                  MIT license
 ```
 
 ## License
 
-Add a license before publishing (for example MIT).
+MIT, see the LICENSE file.
 
-### Caddy (planned, validated)
-A prototype was tested and confirmed working: Caddy, using the caddy-docker-proxy plugin, can auto-discover session containers via Docker labels and route to them dynamically (no restart needed when a new session starts), serving one consistent HTTPS endpoint instead of one per-session self-signed cert. Not yet integrated, because it would change the public session URL shape (/s/<id>/ instead of a per-session port) and touch the dashboard, API response, and existing tests.
+### Optional: Caddy front door (PB_CADDY=true)
+
+By default a session opens at `https://localhost:<port>`. Setting `PB_CADDY=true` before running `start.ps1` adds a Caddy reverse proxy so each session opens at `https://<session-id>.localhost:8443` instead:
+
+```powershell
+$env:PB_CADDY = "true"
+powershell -ExecutionPolicy Bypass -File .\start.ps1
+```
+
+**How it works:** Caddy (`caddy-docker-proxy` plugin) discovers sessions from Docker labels on each session's relay container, with no restart when sessions start or stop. It reaches Docker only through a separate read-only socket proxy (it can list containers but cannot create, stop or exec anything). Caddy is not attached to any session network and the browser and Tor containers carry no routing labels, so sessions cannot reach Caddy.
+
+**Notes:**
+- Off by default (nothing changes when the flag is unset).
+- `PB_CADDY_PORT` changes the port (default `8443`) and the port must be free.
+- Browsers still show a certificate warning because Caddy signs with its own local certificate authority (a trusted padlock needs that authority trusted on your machine, or a real domain with public certificates).
+- Caddy does not make browsing faster (speed is limited by Tor).
+- It is not part of the docker-compose setup.
+
+**Tested:** scripted checks (routing, session password still enforced, sessions cannot reach Caddy, the read-only proxy rejects writes, the address disappears after Destroy) plus a manual check in a real browser.
