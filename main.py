@@ -14,7 +14,7 @@ import docker
 import docker.errors
 from fastapi import FastAPI, Request
 from pydantic import BaseModel
-from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.responses import JSONResponse, HTMLResponse, PlainTextResponse
 from pathlib import Path
 import hmac
 import secrets
@@ -124,6 +124,27 @@ def audit(event, session_id="", detail=""):
     except REDIS_ERRORS:
         logger.warning("audit: redis unavailable, event dropped")
 
+def metric_inc(name, n=1):
+    try:
+        client.hincrby("metrics", name, n)
+    except REDIS_ERRORS:
+        logger.warning("metrics: redis unavailable, count dropped")
+
+def observe_ready(session_id, created_at):
+    try:
+        if not client.set("ttr:" + session_id, "1", nx=True, ex=3600):
+            return
+        created = datetime.datetime.strptime(created_at, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc)
+        secs = max(0.0, (datetime.datetime.now(datetime.timezone.utc) - created).total_seconds())
+        pipe = client.pipeline()
+        pipe.hincrbyfloat("metrics", "ttr_sum", secs)
+        pipe.hincrby("metrics", "ttr_count", 1)
+        pipe.execute()
+    except REDIS_ERRORS:
+        logger.warning("metrics: redis unavailable, ready time not recorded")
+    except ValueError:
+        logger.warning("metrics: could not parse created_at")
+
 def hit(key, window):
     pipe = client.pipeline()
     pipe.incr(key)
@@ -149,6 +170,7 @@ def record_auth_failure(ip, path):
         hit("rl:auth:" + ip, AUTH_FAIL_WINDOW)
     except REDIS_ERRORS:
         logger.warning("rate limit: redis unavailable, failure not counted")
+    metric_inc("auth_failed")
     audit("auth_failed", detail="path=" + path)
 
 def parse_docker_time(s):
@@ -192,6 +214,7 @@ def reap_once():
             logger.info(f"reaper: stopped {c.name} (no session record)")
             if c.labels.get("pb.role") == "session":
                 audit("session_expired", sid)
+                metric_inc("sessions_expired")
         except docker.errors.NotFound:
             pass
         except docker.errors.DockerException as e:
@@ -260,6 +283,7 @@ async def require_key(request: Request, call_next):
     ip = request.client.host if request.client else "unknown"
     retry = await asyncio.to_thread(auth_locked, ip)
     if retry:
+        await asyncio.to_thread(metric_inc, "lockout_responses")
         return JSONResponse(status_code=429, content={"error": "too_many_attempts"}, headers={"Retry-After": str(retry)})
     
     supplied = request.headers.get("x-api-key", "")
@@ -299,6 +323,7 @@ def create_session(body: CreateSessionRequest = CreateSessionRequest()):
     except REDIS_ERRORS:
         return JSONResponse(status_code=503, content={"error": "redis_unavailable"})
     if count > RATE_CREATE_LIMIT:
+        metric_inc("rate_limited")
         audit("rate_limited", detail="create")
         return JSONResponse(status_code=429, content={"error": "rate_limited"}, headers={"Retry-After": str(ttl)})
 
@@ -459,6 +484,7 @@ def create_session(body: CreateSessionRequest = CreateSessionRequest()):
         safe_cleanup(dclient, session_id)
         return JSONResponse(status_code=503, content={"error": "redis_unavailable"})
 
+    metric_inc("sessions_created")
     audit("session_created", session_id)
 
     return JSONResponse(status_code=201, content={
@@ -492,11 +518,14 @@ def list_sessions():
     
     sessions = []
     for _, data, ttl in raw_sessions:
+        ready = session_ready(data["port"], data["session_id"])
+        if ready:
+            observe_ready(data["session_id"], data.get("created_at", ""))
         sessions.append({
             "session_id": data["session_id"],
             "url": session_url(data["session_id"], data["port"]),
             "expires_in": ttl,
-            "ready": session_ready(data["port"], data["session_id"])
+            "ready": ready
         })
         
     return JSONResponse(status_code=200, content={"sessions": sessions})
@@ -512,12 +541,15 @@ def get_session(session_id: str):
             return JSONResponse(status_code=404, content={"error": "not_found"})
         data = json.loads(val)
         ttl = client.ttl("session:" + session_id)
+        ready = session_ready(data.get("port"), session_id)
+        if ready:
+            observe_ready(session_id, data.get("created_at", ""))
         
         return JSONResponse(status_code=200, content={
             "session_id": session_id,
             "url": session_url(session_id, data.get("port")),
             "expires_in": ttl,
-            "ready": session_ready(data.get("port"), session_id)
+            "ready": ready
         })
     except (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError, redis.exceptions.RedisError):
         return JSONResponse(status_code=503, content={"error": "redis_unavailable"})
@@ -552,6 +584,7 @@ def delete_session(session_id: str):
     except (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError, redis.exceptions.RedisError):
         return JSONResponse(status_code=503, content={"error": "redis_unavailable"})
     
+    metric_inc("sessions_destroyed")
     audit("session_destroyed", session_id)
     return JSONResponse(status_code=200, content={"destroyed": session_id})
 
@@ -575,3 +608,49 @@ def get_audit(count: int = 50):
             "detail": fields.get("detail", "")
         })
     return JSONResponse(status_code=200, content={"events": events})
+
+@app.get("/metrics")
+def get_metrics():
+    try:
+        h = client.hgetall("metrics")
+        active = sum(1 for _ in client.scan_iter("session:*"))
+    except REDIS_ERRORS:
+        return JSONResponse(status_code=503, content={"error": "redis_unavailable"})
+
+    sessions_created = int(float(h.get("sessions_created", "0")))
+    sessions_destroyed = int(float(h.get("sessions_destroyed", "0")))
+    sessions_expired = int(float(h.get("sessions_expired", "0")))
+    rate_limited = int(float(h.get("rate_limited", "0")))
+    auth_failed = int(float(h.get("auth_failed", "0")))
+    lockout_responses = int(float(h.get("lockout_responses", "0")))
+    ttr_sum = round(float(h.get("ttr_sum", "0")), 3)
+    ttr_count = int(float(h.get("ttr_count", "0")))
+
+    lines = [
+        "# HELP voidx_sessions_created_total Sessions created since Redis started.",
+        "# TYPE voidx_sessions_created_total counter",
+        f"voidx_sessions_created_total {sessions_created}",
+        "# HELP voidx_sessions_destroyed_total Sessions destroyed through the API.",
+        "# TYPE voidx_sessions_destroyed_total counter",
+        f"voidx_sessions_destroyed_total {sessions_destroyed}",
+        "# HELP voidx_sessions_expired_total Sessions whose containers the reaper removed after the record expired.",
+        "# TYPE voidx_sessions_expired_total counter",
+        f"voidx_sessions_expired_total {sessions_expired}",
+        "# HELP voidx_rate_limited_total Session creations refused by the rate limiter.",
+        "# TYPE voidx_rate_limited_total counter",
+        f"voidx_rate_limited_total {rate_limited}",
+        "# HELP voidx_auth_failures_total Requests with a wrong API key.",
+        "# TYPE voidx_auth_failures_total counter",
+        f"voidx_auth_failures_total {auth_failed}",
+        "# HELP voidx_auth_lockout_responses_total Requests refused because of the wrong-key lockout.",
+        "# TYPE voidx_auth_lockout_responses_total counter",
+        f"voidx_auth_lockout_responses_total {lockout_responses}",
+        "# HELP voidx_sessions_active Sessions currently recorded in Redis.",
+        "# TYPE voidx_sessions_active gauge",
+        f"voidx_sessions_active {active}",
+        "# HELP voidx_time_to_ready_seconds Seconds from session record creation to the first poll that saw Ready.",
+        "# TYPE voidx_time_to_ready_seconds summary",
+        f"voidx_time_to_ready_seconds_sum {ttr_sum}",
+        f"voidx_time_to_ready_seconds_count {ttr_count}",
+    ]
+    return PlainTextResponse("\n".join(lines) + "\n", media_type="text/plain; version=0.0.4; charset=utf-8")
