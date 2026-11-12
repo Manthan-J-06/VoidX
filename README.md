@@ -31,6 +31,7 @@ Typical uses: opening a suspicious link without risking your machine, testing ho
 - **Automatic cleanup**: sessions expire via a Redis TTL. A background reaper removes any container or network whose session record is gone.
 - **Redis-backed control plane**: session records with expiry, rate limiting, brute-force lockout, and an audit log (Redis Stream).
 - **Authenticated API and dashboard**: API key on every endpoint except the health check and the dashboard page.
+- **Measured service**: a /metrics endpoint exposes usage counters and time-to-ready in Prometheus text format.
 
 ## Architecture
 
@@ -97,6 +98,7 @@ All endpoints except `/health` and `GET /` require the header `X-API-Key: <key>`
 | `GET` | `/sessions/{id}` | One session. `ready` is true only when the browser answers **and** Tor has connected |
 | `DELETE` | `/sessions/{id}` | Destroy a session (containers, network, record) |
 | `GET` | `/audit?count=50` | Recent audit events, newest first |
+| `GET` | `/metrics` | Prometheus-format counters (sessions created/destroyed/expired, rate-limit hits, failed-key attempts, lockout responses), active sessions, and time-to-ready. Needs the API key. |
 
 Errors are JSON, e.g. `{"error":"too_many_sessions"}` (`429`), `{"error":"rate_limited"}` (`429` with `Retry-After`), `{"error":"too_many_attempts"}` (`429`), `{"error":"redis_unavailable"}` (`503`).
 
@@ -145,6 +147,7 @@ Please read these before relying on it:
 - **Startup takes 30 seconds to 2+ minutes (Tor circuit build time varies).** If Tor can't connect (for example, on a network that blocks it), a session stays on *Starting...* until it expires.
 - The native launcher (start.ps1) is Windows PowerShell; the docker-compose setup (see docker-compose.README.md) is the cross-platform alternative.
 - **Not tested:** WebRTC leaks, browser fingerprinting, and raw UDP DNS to a public resolver (the Chromium image has no nslookup).
+- **Metrics are in-memory and approximate.** Counters live in Redis and reset when Redis is recreated. Time-to-ready is measured from when the session record is written to the first poll that saw Ready, so it excludes container start-up before the record exists and has the polling interval as its resolution.
 
 ## Verification
 
@@ -157,7 +160,7 @@ Each stage was checked with a scripted test that creates real sessions and print
 - rate limiting, lockout and recovery.
 - Network leak tests: no IPv4 default route in a session, direct IPv4 and IPv6 connections fail, local DNS cannot resolve public names (with a control showing internal names do resolve), and Tor's SOCKS proxy refuses the host's API and Redis ports, the loopback address and the Redis container.
 
-These checks are now an automated pytest suite in tests/: 7 smoke tests that need no Docker (run on every push by GitHub Actions) and 21 integration tests that need a running stack (python -m pytest -m integration, several minutes, mostly waiting for Tor). Nine of the integration tests are network-leak tests (tests/test_leaks.py).
+These checks are now an automated pytest suite in tests/: 7 smoke tests that need no Docker (run on every push by GitHub Actions) and 27 integration tests that need a running stack (python -m pytest -m integration, several minutes, mostly waiting for Tor). Nine of the integration tests are network-leak tests (tests/test_leaks.py) and six cover the metrics endpoint (tests/test_metrics.py).
 
 ## Roadmap
 
